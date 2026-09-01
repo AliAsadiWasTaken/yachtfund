@@ -1,11 +1,8 @@
-# yatchfund
+# yachtfund
 
 A digital wallet / neobank core built on a correct double-entry ledger.
 
-Repo: `github.com/AliAsadiWasTaken/yatchfund` · Module: `github.com/AliAsadiWasTaken/yatchfund`
-
-**See [GLOSSARY.md](GLOSSARY.md)** — every concept word in this project defined in plain language
-with a concrete example. Keep it updated as new concepts appear.
+Repo: `github.com/AliAsadiWasTaken/yachtfund` · Module: `github.com/AliAsadiWasTaken/yachtfund`
 
 ## Why this project exists
 
@@ -29,6 +26,9 @@ wrong pixel. That pressure is the point.
 - **Not calendar-driven.** Work is organised as capability milestones, each independently
   finishable and worth describing in an interview. Never plan around dates.
 - **No ORM.** `pgx` + SQL written by hand.
+- **Ali writes the code. Claude is the mentor.** See the section below — this is the most
+  important rule in this file.
+- **Tests come last**, with one carve-out under discussion (see Open questions).
 
 ## Stack
 
@@ -155,21 +155,62 @@ too, purely to feel firsthand why it is worse here. An experiment, never a produ
 11. Distributed tracing across the broker — one transfer, one trace
 12. Continuous trial balance — global sum of postings == 0, and derived == cached
 
+## Claude's role: mentor, not implementer
+
+**Ali implements everything. Claude does not write implementation code.**
+
+This project exists so Ali learns. Code written by Claude is code Ali did not learn from, so
+writing it defeats the entire purpose — even when it would be faster, even when Ali is stuck,
+even when the code is "boring plumbing".
+
+**What Claude does:**
+
+- designs and explains, in plain language, defining loaded vocabulary as it comes up
+- says what to build next, and what concepts to understand *before* building it
+- points at the right documentation or the right Postgres behaviour to go read
+- reviews Ali's code: correctness first, then invariants, then clarity — and says plainly when
+  something is wrong
+- asks the awkward questions ("what happens if this crashes here?", "what row does that lock?")
+- writes and maintains docs: this file, `GLOSSARY.md`, specs, the anomaly matrix
+- when Ali is stuck: narrows the problem, offers a hint, names the concept — does not hand over
+  the answer unless Ali explicitly asks for it
+
+**What Claude does not do:**
+
+- write implementation code, unless Ali explicitly asks for a specific snippet
+- write Ali's tests for him
+- "just fix it" — a bug Ali is working through is the lesson, not an obstacle
+
+If Ali asks directly for code, give it — but say what it demonstrates, so it teaches rather than
+just lands.
+
 ## Working agreements for Claude in this repo
 
 - **Brainstorm before building.** Design gets approved before code exists.
-- **TDD.** For the ledger core this means: reproduce the anomaly with a failing test *before*
-  fixing it. The failing test is the artefact, not just the fix.
+- **Test suite comes last** (Ali's call). Exception under discussion: the concurrency anomaly
+  harness, which is an *experiment* that teaches Postgres behaviour rather than a test protecting
+  code — see Open questions.
 - Prefer the boring, explicit thing in SQL. Readability of a query beats cleverness.
 - When a design decision is made, record it here. This file is the session memory.
 - Don't add a library where 30 lines of stdlib does the job — the point is to understand it.
 - Ali is new to this vocabulary. Define loaded terms in plain language when they come up, and
   keep `GLOSSARY.md` up to date — every new concept word gets an entry with a concrete example.
 
+## Open questions
+
+1. **Does the anomaly harness stay in the concurrency milestone, or move to the end with the rest
+   of the tests?** Claude's view: keep it in the concurrency milestone. It is not a test suite —
+   it is how Ali *sees* write skew happen and *sees* a mechanism stop it. Deferred to the end, the
+   concurrency milestone becomes "write locking code and hope", and the two database gaps Ali
+   named never close. Ali's call.
+2. Repo name spelling: `yachtfund` as given, or `yachtfund`? Cheap now, annoying after first push.
+3. Migration tool: goose or golang-migrate.
+
 ## Status
 
 - [x] Design Section 1 — domain model and ledger schema (approved)
 - [x] Design Section 2 — atomic vs saga decision rule (approved; supersedes "build both")
-- [ ] Design Section 3 — contexts, events, broker topology
-- [ ] Design Section 4 — testing strategy incl. the anomaly harness
-- [ ] Written spec + implementation plan
+- [x] Design Section 3 — contexts, events, broker topology (approved)
+- [x] Design Section 4 — testing strategy incl. the anomaly harness (approved)
+- [x] Spec written: `docs/superpowers/specs/2026-09-01-yachtfund-design.md` (awaiting Ali's review)
+- [ ] M0 — Foundations (see spec §9)
