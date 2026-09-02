@@ -161,6 +161,31 @@ maintenance touch less data. Relevant once the journal is large.
 **Migration** — a versioned, ordered script that changes the database schema, so every environment
 gets the same structure in the same order.
 
+**Connection pool** — a set of already-open database connections kept ready and lent out on
+demand. Postgres backends are *processes*, not threads, so opening one is expensive and the number
+the server will accept (`max_connections`) is finite and shared by everything that connects: every
+API replica, the migration runner, future consumers, and your own `psql` sessions.
+
+**Query cancellation** — telling Postgres to abandon a query that is already running. Postgres does
+this out-of-band: the client opens a *second* connection and sends a cancel request carrying the
+busy backend's process id and a secret issued at connect time (the secret is why a stranger cannot
+cancel your query). `pgx` does this for you when the `context.Context` you passed is cancelled —
+but only if that same context actually reached the query call. A function that accepts a `ctx` and
+passes `context.Background()` onward instead breaks it *silently*: no error anywhere, and the query
+runs to completion after the caller has gone.
+
+*Why it matters here:* an abandoned request holding `SELECT … FOR UPDATE` on an account blocks
+every other transfer touching that account, and nothing is waiting for it.
+
+**`pg_cancel_backend` / `pg_terminate_backend`** — the SQL equivalents. Cancel stops the current
+query and keeps the session; terminate kills the whole connection.
+
+**`statement_timeout`** — a server-side limit on how long any single statement may run. The
+backstop, because client cancellation is *cooperative*: a client that was `SIGKILL`ed sends no
+cancel request, and Postgres won't notice the dead socket until it next writes to it. Its sibling
+`idle_in_transaction_session_timeout` catches the worse case — an open DB transaction holding locks
+while nobody is talking.
+
 ---
 
 ## Design (DDD and hexagonal)
@@ -328,7 +353,53 @@ field is safe; renaming or removing one is not. Why topics carry a `.v1` suffix.
 **Testcontainers** — a library that starts real Postgres/Kafka/RabbitMQ in Docker for the duration
 of a test, so integration tests run against the real thing instead of a mock.
 
-**OpenTelemetry** — the standard for emitting traces, metrics and logs.
+**Healthcheck** — a command a container runs against itself so the runtime can tell "started" from
+"actually ready". Compose creating the Postgres container is not the same as Postgres accepting
+connections, and without a healthcheck your app races the database on a cold start. `pg_isready`
+is the Postgres one. A healthcheck only *reports* status — it gates nothing until something waits
+on it: `docker compose up -d --wait`, or another service declaring
+`depends_on: { postgres: { condition: service_healthy } }`.
+
+**Named volume** — storage with a name that Docker manages, so data outlives the container. The
+trap: it has to be mounted at the path the database actually writes to. The `postgres:18` image
+puts `PGDATA` at `/var/lib/postgresql/18/docker` (earlier majors used
+`/var/lib/postgresql/data`), so a volume mounted at the old path holds nothing — and because the
+image declares its own volume, the data still persists into an *anonymous* volume, which looks
+fine until something prunes it. Prove persistence by destroying the container while keeping
+volumes, not by restarting it.
+
+**Structured logging** — emitting log lines as key/value fields rather than prose, so they can be
+filtered and aggregated instead of grepped. `log/slog` is the standard library's version, and it
+splits deliberately in two: `*slog.Logger` is the concrete thing you call, `slog.Handler` is the
+interface that formats and ships records. That handler *is* the port — there is no reason to wrap
+slog in a hand-written `Logger` interface.
+
+**OpenTelemetry (OTel)** — the vendor-neutral standard for emitting traces, metrics and logs (its
+three **signals**).
+
+**OTel API vs SDK** — two separate modules, and conflating them is the usual beginner mistake. The
+**API** (`go.opentelemetry.io/otel`) is interfaces and no-ops; library and application code depend
+on it only. The **SDK** (`go.opentelemetry.io/otel/sdk`) is the real implementation — samplers,
+processors, exporters — and exactly one place imports it: the binary's startup. API is the port,
+SDK is the adapter, `cmd/api/main.go` is the **composition root**. The same shape this repo already
+uses everywhere else.
+
+**Exporter / processor / sampler / resource** — where spans go (stdout, OTLP); what happens to them
+before they go (in practice, batching); which traces get recorded at all; and the attributes
+describing *this process*, e.g. `service.name`. **OTLP** is the wire protocol. A **Collector** is
+an optional separate process that receives and fans out.
+
+**Span link** — a reference from one span to another that is related but not its parent. The async
+question: when a consumer handles a message minutes after it was published, is its span a *child*
+of the producer's, or a new trace *linked* to it? A real design decision, not trivia.
+
+**Baggage** — arbitrary key/values that propagate across service boundaries alongside the trace
+context. Distinct from span attributes, which do not propagate. Also a foot-gun: it travels in
+headers, so nothing sensitive belongs in it.
+
+**Semantic conventions** — the agreed attribute names (`db.system.name`, `messaging.destination.name`,
+…). Read them before inventing your own: a span with homemade attribute names is a span no tool
+can chart.
 
 **Trace / span / trace context propagation** — a trace is the full story of one request across
 every service; a span is one step in it. Propagation means passing the trace id along — including

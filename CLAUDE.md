@@ -197,31 +197,105 @@ just lands.
 - Ali is new to this vocabulary. Define loaded terms in plain language when they come up, and
   keep `GLOSSARY.md` up to date — every new concept word gets an entry with a concrete example.
 
+## Decided in M0 (configuration and connections)
+
+- **Postgres 18, pinned explicitly** in `docker-compose.yaml`. Never `latest`.
+  Consequence worth remembering: `PGDATA` moved to `/var/lib/postgresql/18/docker`, so the named
+  volume mounts at `/var/lib/postgresql`, not the pre-18 `/var/lib/postgresql/data`.
+- **Compose healthcheck via `pg_isready`**, and `make up` uses `up -d --wait` so the healthcheck
+  actually gates something instead of merely reporting.
+- **The `POSTGRES_*` parts are the single source of truth.** Compose reads them to initialise the
+  server; `internal/config` assembles the client DSN from the same values. The DSN is *never*
+  built with `fmt.Sprintf` — `net/url` with `url.UserPassword` and `net.JoinHostPort`, so a
+  password containing `@` or `/` cannot silently redirect the connection. Nothing else may derive
+  a second copy of the DSN (a `DATABASE_URL` derived in the Makefile shadowed all of this once
+  already, and made `make run` and `go run` disagree about which database they reached).
+- **`DATABASE_URL` is override-only**, for a database Compose does not manage — and it must be
+  left commented in `.env`, never blank, since a set-but-empty value still wins.
+- **`sslmode` defaults to `require`.** Local development opts out via `POSTGRES_SSLMODE=disable`.
+  An unset variable must never be the insecure choice.
+- **The password never reaches a log line**: `Config.databaseURL` is unexported behind a `DSN()`
+  accessor, and `String()` prints `url.URL.Redacted()`.
+- **The connection pool is not owned by any bounded context.** It lives in `internal/postgres/`,
+  because Wallet must not import Ledger's adapter to get a pool. Per-context *repositories* still
+  belong under `internal/<context>/adapter/postgres/`.
+- **`main` delegates to `run() error`.** `log.Fatal` calls `os.Exit`, which skips deferred
+  functions — including a future OTel exporter shutdown, which would lose the trace of the very
+  failure being debugged.
+- **Layout:** `cmd/api/main.go` and `internal/...` at the repo root. No `src/` directory.
+
+### OpenTelemetry — sequencing (proposed by Claude, Ali has not confirmed)
+
+Ali has confirmed he wants OTel and to learn it; only the ordering below is still a proposal.
+
+- **M0:** no OTel at all. Just `context.Context` threaded everywhere. `ctx` is the transport for
+  three things at once — cancellation, trace propagation, and log correlation — which is why the
+  discipline is a rule rather than a style preference.
+- **End of M1:** wire the SDK in `cmd/api/main.go` with the `stdouttrace` exporter first, then
+  `otelhttp` and a pgx `QueryTracer`. Spans in the terminal before any new container.
+- **Then:** swap the exporter to OTLP against Jaeger. A Collector only when it teaches something.
+- **With the broker milestone:** propagation through message headers, and the parent-vs-span-link
+  decision for async consumers.
+- **Recorded against challenge #2 (outbox) so it isn't discovered the hard way:** with a
+  transactional outbox, the publish happens in a different process at a different time, so there
+  is no in-memory span to parent from. **The span context must be persisted in the outbox row**
+  and re-injected by the relay, or the trace snaps at exactly the boundary the outbox exists to
+  protect.
+
 ## Open questions
 
-1. **Does the anomaly harness stay in the concurrency milestone, or move to the end with the rest
-   of the tests?** Claude's view: keep it in the concurrency milestone. It is not a test suite —
-   it is how Ali *sees* write skew happen and *sees* a mechanism stop it. Deferred to the end, the
-   concurrency milestone becomes "write locking code and hope", and the two database gaps Ali
-   named never close. Ali's call.
-2. Repo name spelling: `yachtfund` as given, or `yachtfund`? Cheap now, annoying after first push.
-3. Migration tool: goose or golang-migrate.
+1. **Migration tool: goose or golang-migrate.** Blocks M0.2. Claude recommends goose.
+2. **HTTP router.** Claude recommends stdlib `net/http`.
+3. **Logging library.** Claude recommends `log/slog`: stdlib, structured, context-aware, and its
+   `slog.Handler` is already the port, so the OTel logs bridge can be swapped in later without
+   touching a single call site. logrus (used in the gerami codebase) is feature-frozen by its own
+   maintainers and is the library slog replaced — fine to know, wrong to start on. Not yet
+   confirmed by Ali.
+4. **OTel sequencing** — the proposal above, awaiting Ali's confirmation.
+5. Where `statement_timeout` and `idle_in_transaction_session_timeout` get set: per role, per
+   session, or per DB transaction. Decide before M1 holds locks.
 
 ## Where we left off  (update this at the end of every session)
 
-**Last session: 2026-09-01.** Design complete and approved; spec and M0/M1 plan written. No code
-exists yet. Ali is starting **Task M0.1** (Postgres in Docker + a pgx connection pool).
+**Last session: 2026-09-02.** M0.1 is written and reviewed. `docker-compose.yaml` (Postgres 18,
+healthcheck), `Makefile`, `.env.example`, `internal/config`, `internal/postgres/pool.go` and
+`cmd/api/main.go` all exist; `go vet` and `go build ./...` are clean. Decisions are recorded under
+"Decided in M0" above. Ali wrote all of it; Claude wrote only the `Makefile` and `.env.example`,
+both at Ali's explicit request.
 
-**Decided in M0.1 so far:** `NewPool` takes the DSN as a parameter rather than reading the
-environment itself — dependency injection, so a test database can be wired in and so the
-migration role and app role DSNs (M1.4) can coexist. Ali reached this himself.
+**Good instincts worth repeating back to Ali:** `NewPool` taking the DSN as a parameter (he reached
+dependency injection himself); `pool.Ping` on construction, because `pgxpool.NewWithConfig` is
+*lazy* and would otherwise hand back a pool that fails on first use; closing the pool on the
+failure path; and `SELECT current_database()` as the sanity check rather than a bare ping, because
+it proves *which* database was reached.
 
-**Still open for Ali in M0.1:** the cancellation question — what happens to an in-flight
-`SELECT pg_sleep(10)` in `pg_stat_activity` when the Go context is cancelled, and what must be true
-of every function between the HTTP handler and the query for that cancellation to arrive.
+**Not yet run — Ali's to verify, not Claude's:** `make up` / `make ps` / `make run` / `make psql`.
+Ali must add `POSTGRES_SSLMODE=disable` to `.env`, or the parts path now fails against the local
+container (the `require` default is deliberate).
 
-**Still to choose before M0 proper:** migration tool (recommended: goose), HTTP router
-(recommended: stdlib `net/http`), Postgres major version (pin it explicitly, never `latest`).
+**Still open for Ali in M0.1 — the cancellation experiment.** Four parts, in this order:
+1. Deterministic: `SELECT pg_sleep(30)` under a `context.WithTimeout(ctx, 2*time.Second)`. Which
+   error comes back, and does `errors.Is` match `context.DeadlineExceeded`?
+2. Server side: watch the backend in `pg_stat_activity` from a second `psql`. Does the row go
+   `idle` or vanish? Compare `pool.Stat()` before and after — does a cancel cost a pooled
+   connection?
+3. **Negative control** (the part that makes it stick): pass `context.Background()` to the query
+   instead, hit Ctrl-C, and watch the query run the full 30s with no error anywhere.
+4. The limit: `kill -9` the app mid-query. No cancel request is sent, so the query survives —
+   which is the argument for `statement_timeout`.
+
+Questions to answer from it: what did `pgx` send to Postgres (it is not sent on the busy
+connection); `pg_cancel_backend` vs `pg_terminate_backend`; what specifically must a function *not*
+do for cancellation to survive the call chain; and **does `pgxpool` retain the ctx passed to
+`NewWithConfig`?** That last one is live in `cmd/api/main.go` — the SIGINT context is passed at
+construction and `defer pool.Close()` runs after it is cancelled.
+
+**Left in `pool.go` deliberately, Ali's call:** `config.MaxConns = 10` and friends overwrite any
+`pool_max_conns` the DSN carried, so the DSN cannot configure the pool it claims to configure;
+`fmt.Errorf` with no format verbs wants `errors.New`; and `MaxConnLifetime` has no jitter, so
+connections created together expire together.
+
+**Next:** M0.2 — migrations and the `currencies` table. Blocked on the migration tool choice.
 
 ## Status
 
@@ -231,6 +305,10 @@ of every function between the HTTP handler and the query for that cancellation t
 - [x] Design Section 4 — testing strategy incl. the anomaly harness (approved)
 - [x] Spec written: `docs/superpowers/specs/2026-09-01-yachtfund-design.md` (awaiting Ali's review)
 - [x] Plan written for M0+M1: `docs/superpowers/plans/2026-09-01-m0-m1-foundations-and-ledger-core.md`
-- [ ] M0 — Foundations (spec §9). Blocked on Ali's three choices: migration tool, HTTP router,
-      Postgres major version — recommendations are in the plan.
+- [x] Postgres major version chosen and pinned: **18**
+- [ ] M0 — Foundations (spec §9)
+  - [x] M0.1 — Postgres in Docker, connection pool, config. Written and reviewed.
+        Outstanding: Ali runs the verify block and the cancellation experiment.
+  - [ ] M0.2 — migrations and the `currencies` table. **Blocked on the migration tool choice.**
+  - [ ] M0.3 — `Money` and `Currency`
 - [ ] M1 — Ledger core (spec §9)
