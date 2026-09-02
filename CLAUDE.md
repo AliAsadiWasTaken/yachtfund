@@ -28,7 +28,9 @@ wrong pixel. That pressure is the point.
 - **No ORM.** `pgx` + SQL written by hand.
 - **Ali writes the code. Claude is the mentor.** See the section below — this is the most
   important rule in this file.
-- **Tests come last**, with one carve-out under discussion (see Open questions).
+- **Tests come last** — the ordinary unit/integration suite is milestone M9. **One decided
+  carve-out:** the concurrency anomaly experiments stay in M2, because they are how Ali *sees*
+  Postgres behave, not a test protecting code. Ali agreed to this.
 
 ## Stack
 
@@ -187,9 +189,8 @@ just lands.
 ## Working agreements for Claude in this repo
 
 - **Brainstorm before building.** Design gets approved before code exists.
-- **Test suite comes last** (Ali's call). Exception under discussion: the concurrency anomaly
-  harness, which is an *experiment* that teaches Postgres behaviour rather than a test protecting
-  code — see Open questions.
+- **Test suite comes last** (M9, Ali's call). Decided exception: the concurrency anomaly
+  experiments stay in M2 — they teach Postgres behaviour rather than protect code.
 - Prefer the boring, explicit thing in SQL. Readability of a query beats cleverness.
 - When a design decision is made, record it here. This file is the session memory.
 - Don't add a library where 30 lines of stdlib does the job — the point is to understand it.
@@ -206,6 +207,22 @@ just lands.
 2. Repo name spelling: `yachtfund` as given, or `yachtfund`? Cheap now, annoying after first push.
 3. Migration tool: goose or golang-migrate.
 
+## Where we left off  (update this at the end of every session)
+
+**Last session: 2026-09-01.** Design complete and approved; spec and M0/M1 plan written. No code
+exists yet. Ali is starting **Task M0.1** (Postgres in Docker + a pgx connection pool).
+
+**Decided in M0.1 so far:** `NewPool` takes the DSN as a parameter rather than reading the
+environment itself — dependency injection, so a test database can be wired in and so the
+migration role and app role DSNs (M1.4) can coexist. Ali reached this himself.
+
+**Still open for Ali in M0.1:** the cancellation question — what happens to an in-flight
+`SELECT pg_sleep(10)` in `pg_stat_activity` when the Go context is cancelled, and what must be true
+of every function between the HTTP handler and the query for that cancellation to arrive.
+
+**Still to choose before M0 proper:** migration tool (recommended: goose), HTTP router
+(recommended: stdlib `net/http`), Postgres major version (pin it explicitly, never `latest`).
+
 ## Status
 
 - [x] Design Section 1 — domain model and ledger schema (approved)
@@ -213,4 +230,7 @@ just lands.
 - [x] Design Section 3 — contexts, events, broker topology (approved)
 - [x] Design Section 4 — testing strategy incl. the anomaly harness (approved)
 - [x] Spec written: `docs/superpowers/specs/2026-09-01-yachtfund-design.md` (awaiting Ali's review)
-- [ ] M0 — Foundations (see spec §9)
+- [x] Plan written for M0+M1: `docs/superpowers/plans/2026-09-01-m0-m1-foundations-and-ledger-core.md`
+- [ ] M0 — Foundations (spec §9). Blocked on Ali's three choices: migration tool, HTTP router,
+      Postgres major version — recommendations are in the plan.
+- [ ] M1 — Ledger core (spec §9)

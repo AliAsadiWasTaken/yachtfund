@@ -207,6 +207,19 @@ against real Postgres, and implementations can be swapped without touching a bus
 **Dependency inversion** — the reason hexagonal works: the domain defines the interface, and
 infrastructure implements it, so the arrows point inward and the domain depends on nothing.
 
+**Dependency injection** — giving a function or struct what it needs as an argument instead of
+letting it fetch things for itself. `NewPool(ctx, dsn)` is injected; a `NewPool(ctx)` that reads
+`os.Getenv("DATABASE_URL")` internally is not. The defect in the second one is that its signature
+*lies* about what it depends on — being hard to test is how you notice, not the reason it's wrong.
+
+**Composition root** — the single place that knows about every layer at once and wires them
+together. Here that is `cmd/api/main.go`: it reads configuration, builds the adapters, injects them
+into the use cases. Nothing deeper in the program reads the environment.
+
+**DSN (Data Source Name)** — the connection string that says where a database is and who is
+connecting: `postgres://user:pass@host:5432/dbname`. Configuration, therefore owned by the
+composition root.
+
 **Unit of Work** — a port meaning "run all of this inside one DB transaction", so domain code
 never mentions `BEGIN` or `COMMIT`. Retrying on `40001` belongs in its adapter, because that is
 infrastructure knowledge.

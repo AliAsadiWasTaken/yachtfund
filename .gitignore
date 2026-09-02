@@ -1,5 +1,6 @@
 /bin/
 /dist/
+cmd/scratch/
 *.test
 coverage.out
 .env

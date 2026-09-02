@@ -52,9 +52,9 @@ specific snippet. The rationale and the full division of labour are in `CLAUDE.m
 milestone. Each milestone must be independently finishable and worth describing in an interview on
 its own, so stopping at any point leaves a complete thing rather than a torso.
 
-**The test suite comes last.** One carve-out is open for discussion: the concurrency anomaly
-harness (§8.3), which is an experiment that teaches Postgres behaviour rather than a test that
-protects code.
+**The test suite comes last** (M9). One decided carve-out: the concurrency anomaly experiments
+(§8.3) belong to M2, because they are how Ali *sees* Postgres behave rather than tests that protect
+code.
 
 ## 4. Architecture
 
@@ -431,7 +431,8 @@ Every individual step summed to zero. The books were never wrong — only incomp
 
 ## 8. Testing strategy
 
-Sequenced last, per §3, with the §8.3 carve-out open.
+Sequenced last, per §3 — **except §8.3**, the concurrency anomaly experiments, which are part of
+M2 by decision. Everything else in this section is M9.
 
 ### 8.1 Three tiers
 
@@ -590,15 +591,17 @@ comes here, at the end.
 
 ## 10. Open questions
 
-1. **Does the anomaly harness (§8.3) stay in M2, or move to M9 with the rest of the tests?**
-   Claude's view: keep it in M2. It is not a test suite — it is how Ali *sees* write skew happen
-   and *sees* a mechanism stop it. Deferred, M2 becomes "write locking code and hope", and the two
-   database gaps named in §1 never close. **Ali's call.**
-2. Repo name spelling: `yachtfund` as given, or `yachtfund`? Cheap now, annoying after first push.
-3. Migration tool: goose or golang-migrate.
-4. Outbox ordering (§7.3): one worker per account-hash, or order-tolerant consumers?
-5. HTTP layer: net/http with the 1.22+ router, or chi? Leaning stdlib — fewer dependencies, more
+1. Migration tool: goose or golang-migrate.
+2. Outbox ordering (§7.3): one publisher worker per account-hash, or order-tolerant consumers?
+3. HTTP layer: net/http with the 1.22+ router, or chi? Leaning stdlib — fewer dependencies, more
    understanding.
+
+### Resolved
+
+- **Anomaly experiments live in M2, not M9** (decided by Ali). They are how Ali *sees* Postgres
+  behave rather than tests that protect code. The ordinary test suite still goes to M9.
+- **Project name is `yachtfund`** — `yacht` is the correct English spelling (`yatch` is a common
+  misspelling and is in no dictionary). Renamed before the first commit, so it cost nothing.
 
 ## 11. Decision log
 
